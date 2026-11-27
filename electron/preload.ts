@@ -46,6 +46,7 @@ export interface DesktopBridgeAPI {
   refreshAgent: (agent?: AgentId) => void;
   setSimulatedQuota: (left: number, right: number) => void;
   setDshFreeLegQuota: (pct: number) => void;
+  setSyncSingleQuotaBothLegs: (enabled: boolean) => void;
   setVisualPreset: (presetId: string, laceCuff?: boolean) => void;
   setSizePreset: (size: WidgetSizePreset) => void;
   setScalePct: (scalePct: number) => void;
@@ -124,6 +125,9 @@ const api: DesktopBridgeAPI = {
   },
   setDshFreeLegQuota: (pct: number) => {
     ipcRenderer.send('widget:set-dsh-free-leg', pct);
+  },
+  setSyncSingleQuotaBothLegs: (enabled: boolean) => {
+    ipcRenderer.send('widget:set-sync-single-legs', enabled);
   },
   setVisualPreset: (presetId: string, laceCuff?: boolean) => {
     ipcRenderer.send('widget:set-visual', presetId, laceCuff);

@@ -636,6 +636,15 @@ function buildContextMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       },
     },
     {
+      label: '单额度双腿同步显示（一手拉一袜）',
+      type: 'checkbox',
+      checked: s.syncSingleQuotaBothLegs,
+      click: (item) => {
+        store.update({ syncSingleQuotaBothLegs: item.checked }, true);
+        broadcastState();
+      },
+    },
+    {
       label: '自动跟随前台 Agent 切换丝袜',
       type: 'checkbox',
       checked: s.autoFollowAgent,
@@ -689,9 +698,15 @@ function rebuildTrayMenu(): void {
       const w0 = metric.windows[0];
       summary = `DSH 上下文剩余 ${Math.round(w0?.remainingPercent ?? 0)}%`;
     } else {
-      const w0 = metric.windows[0]?.remainingPercent;
-      const w1 = metric.windows[1]?.remainingPercent;
-      summary = `${AGENT_BINDINGS[s.activeAgent].displayName} ${w0 !== undefined ? `${Math.round(w0)}%` : '--'} / ${w1 !== undefined ? `${Math.round(w1)}%` : '--'}`;
+      const realWins = metric.windows.filter((w) => !w.isFreePlay && typeof w.remainingPercent === 'number');
+      if (realWins.length === 1) {
+        const w0 = realWins[0];
+        summary = `${AGENT_BINDINGS[s.activeAgent].displayName} ${w0.label} ${Math.round(w0.remainingPercent ?? 0)}%`;
+      } else {
+        const w0 = realWins[0]?.remainingPercent;
+        const w1 = realWins[1]?.remainingPercent;
+        summary = `${AGENT_BINDINGS[s.activeAgent].displayName} ${w0 !== undefined ? `${Math.round(w0)}%` : '--'} / ${w1 !== undefined ? `${Math.round(w1)}%` : '--'}`;
+      }
     }
   }
   tray.setToolTip(`StockingQuota · ${summary}`);
@@ -916,6 +931,11 @@ function registerIpcHandlers(): void {
       store.update({ dshFreeLegQuota: Math.max(0, Math.min(100, Math.round(pct))) });
       broadcastState();
     }
+  });
+
+  ipcMain.on('widget:set-sync-single-legs', (_e, enabled: boolean) => {
+    store.update({ syncSingleQuotaBothLegs: Boolean(enabled) }, true);
+    broadcastState();
   });
 
   ipcMain.on('widget:set-visual', (_e, presetId: string, laceCuff?: boolean) => {

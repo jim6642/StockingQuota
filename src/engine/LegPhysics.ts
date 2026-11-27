@@ -1,6 +1,7 @@
 import { LegGeometryMeta, LegTelemetry, PhysicsConfig } from './types';
 
 export const CUFF_NODE_COUNT = 11;
+export type HandGripMode = 'both' | 'left-only' | 'right-only';
 
 /**
  * Physically-grounded elastic stocking cuff, instep-roll, barefoot & yank-off solver.
@@ -60,6 +61,8 @@ export class LegPhysics {
   /** Normalized cuff U positions where left & right hands grip */
   public leftHandU = 0.16;
   public rightHandU = 0.84;
+  /** Whether both hands grip this leg, or only one hand (when both legs are pulled in sync) */
+  public handMode: HandGripMode = 'both';
 
   private accumulator = 0;
   private readonly fixedDt = 1 / 240;
@@ -124,8 +127,9 @@ export class LegPhysics {
     return Math.max(minY, Math.min(maxY, y));
   }
 
-  public startDrag(pointerX: number, pointerY: number, grabU: number): void {
+  public startDrag(pointerX: number, pointerY: number, grabU: number, handMode: HandGripMode = 'both'): void {
     this.isDragging = true;
+    this.handMode = handMode;
     this.grabU = Math.max(0.05, Math.min(0.95, grabU));
     this.dragStartPointerX = pointerX;
     this.dragStartPointerY = pointerY;
@@ -138,8 +142,16 @@ export class LegPhysics {
       this.barefootPokeShield = true;
     }
 
-    this.leftHandU = this.grabU < 0.25 ? 0.11 : 0.17;
-    this.rightHandU = this.grabU > 0.75 ? 0.89 : 0.83;
+    if (handMode === 'left-only') {
+      this.leftHandU = 0.24;
+      this.rightHandU = 0.84;
+    } else if (handMode === 'right-only') {
+      this.leftHandU = 0.16;
+      this.rightHandU = 0.76;
+    } else {
+      this.leftHandU = this.grabU < 0.25 ? 0.11 : 0.17;
+      this.rightHandU = this.grabU > 0.75 ? 0.89 : 0.83;
+    }
   }
 
   public updateDrag(pointerX: number, pointerY: number): void {
@@ -332,8 +344,8 @@ export class LegPhysics {
       let force = -kBase * dirStiff * d * nonLinearTerm;
 
       if (d > 2 && this.handEngagement > 0.02) {
-        const wLeft = Math.exp(-Math.pow((u - this.leftHandU) / 0.22, 2));
-        const wRight = Math.exp(-Math.pow((u - this.rightHandU) / 0.22, 2));
+        const wLeft = this.handMode !== 'right-only' ? Math.exp(-Math.pow((u - this.leftHandU) / 0.22, 2)) : 0;
+        const wRight = this.handMode !== 'left-only' ? Math.exp(-Math.pow((u - this.rightHandU) / 0.22, 2)) : 0;
         const handMask = Math.min(1.15, wLeft + wRight);
         const counterPull =
           kBase * config.handCounterStrength * this.handEngagement * (0.28 + 0.72 * handMask) * (d * 0.65 + tugOsc * 26);

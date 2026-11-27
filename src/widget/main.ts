@@ -65,6 +65,7 @@ interface PersistedWidgetState {
   leftQuota: number;
   rightQuota: number;
   dshFreeLegQuota: number;
+  syncSingleQuotaBothLegs: boolean;
   presetId: string;
   laceCuff: boolean;
 }
@@ -105,6 +106,7 @@ interface DesktopBridgeAPI {
   refreshAgent: (agent?: AgentId) => void;
   setSimulatedQuota: (left: number, right: number) => void;
   setDshFreeLegQuota: (pct: number) => void;
+  setSyncSingleQuotaBothLegs: (enabled: boolean) => void;
   setVisualPreset: (presetId: string, laceCuff?: boolean) => void;
   setSizePreset: (size: WidgetSizePreset) => void;
   setScalePct: (scalePct: number) => void;
@@ -274,6 +276,7 @@ class DesktopWidgetApp {
   private simLeftQuota = 82;
   private simRightQuota = 58;
   private dshFreeLegQuota = 62;
+  private syncSingleQuotaBothLegs = true;
 
   private displayedLeftQuota = UNAVAILABLE_LEG_HEIGHT;
   private displayedRightQuota = UNAVAILABLE_LEG_HEIGHT;
@@ -313,6 +316,7 @@ class DesktopWidgetApp {
   private chkHideTrayEl!: HTMLInputElement;
   private chkSentinelEl!: HTMLInputElement;
   private chkAutoExitEl!: HTMLInputElement;
+  private chkSyncSingleLegsEl!: HTMLInputElement;
   private dshPluginRowEl!: HTMLElement;
   private dshPluginTextEl!: HTMLElement;
   private btnDshPluginActionEl!: HTMLButtonElement;
@@ -411,6 +415,10 @@ class DesktopWidgetApp {
             <span>随 Agent 自动唤醒（3MB 极轻哨兵）</span>
             <input type="checkbox" id="chk-sentinel" style="accent-color:#a78bfa;cursor:pointer;" />
           </label>
+          <label class="sim-lace-row" title="针对只有单项额度的 Agent（如 DSH 上下文、Codex Pro 周额度）：开启后双腿同步且一手拉一只袜子；关闭后右腿可自由互动">
+            <span>单额度双腿同步（一手拉一袜）</span>
+            <input type="checkbox" id="chk-sync-single-legs" style="accent-color:#a78bfa;cursor:pointer;" />
+          </label>
           <label class="sim-lace-row">
             <span>自动跟随前台软件切换丝袜</span>
             <input type="checkbox" id="chk-auto-follow" style="accent-color:#a78bfa;cursor:pointer;" />
@@ -493,6 +501,7 @@ class DesktopWidgetApp {
     this.chkHideTrayEl = root.querySelector('#chk-hide-tray')!;
     this.chkSentinelEl = root.querySelector('#chk-sentinel')!;
     this.chkAutoExitEl = root.querySelector('#chk-auto-exit')!;
+    this.chkSyncSingleLegsEl = root.querySelector('#chk-sync-single-legs')!;
     this.dshPluginRowEl = root.querySelector('#dsh-plugin-row')!;
     this.dshPluginTextEl = root.querySelector('#dsh-plugin-text')!;
     this.btnDshPluginActionEl = root.querySelector('#btn-dsh-plugin-action')!;
@@ -522,6 +531,7 @@ class DesktopWidgetApp {
       this.simLeftQuota = init.quota.leftQuota;
       this.simRightQuota = init.quota.rightQuota;
       this.dshFreeLegQuota = init.state.dshFreeLegQuota ?? 62;
+      this.syncSingleQuotaBothLegs = init.state.syncSingleQuotaBothLegs ?? true;
       this.currentPresetId = init.state.presetId;
       this.currentLaceCuff = init.state.laceCuff;
       this.currentScalePct = init.state.scalePct ?? 100;
@@ -634,6 +644,7 @@ class DesktopWidgetApp {
     this.chkHideTrayEl.checked = this.hideTrayIcon;
     this.chkSentinelEl.checked = this.sentinelEnabled;
     this.chkAutoExitEl.checked = this.autoExitWhenNoAgents;
+    this.chkSyncSingleLegsEl.checked = this.syncSingleQuotaBothLegs;
 
     if (this.dshPluginStatus?.dshDetected) {
       this.dshPluginRowEl.classList.remove('hidden');
@@ -651,6 +662,24 @@ class DesktopWidgetApp {
     }
   }
 
+  private getRealWindows(metric?: AgentMetric): AgentMetricWindow[] {
+    if (!metric) return [];
+    return metric.windows.filter(
+      (w) => !w.isFreePlay && typeof w.remainingPercent === 'number' && Number.isFinite(w.remainingPercent),
+    );
+  }
+
+  private isSingleQuotaAgentMode(metric?: AgentMetric): boolean {
+    if (this.activeAgent === 'simulated') return false;
+    if (this.activeAgent === 'dsh') return true;
+    if (!metric || metric.status === 'unavailable') return false;
+    return this.getRealWindows(metric).length === 1;
+  }
+
+  private isDualLegSyncActive(metric?: AgentMetric): boolean {
+    return this.syncSingleQuotaBothLegs && this.isSingleQuotaAgentMode(metric);
+  }
+
   private computeTargetLegHeights(): { left: number; right: number } {
     if (this.activeAgent === 'simulated') {
       return { left: this.simLeftQuota, right: this.simRightQuota };
@@ -662,22 +691,31 @@ class DesktopWidgetApp {
         return { left: UNAVAILABLE_LEG_HEIGHT, right: UNAVAILABLE_LEG_HEIGHT };
       }
       if (this.activeAgent === 'dsh') {
-        return { left: this.displayedLeftQuota, right: this.dshFreeLegQuota };
+        return this.syncSingleQuotaBothLegs
+          ? { left: this.displayedLeftQuota, right: this.displayedLeftQuota }
+          : { left: this.displayedLeftQuota, right: this.dshFreeLegQuota };
       }
       return { left: this.displayedLeftQuota, right: this.displayedRightQuota };
     }
 
-    if (this.activeAgent === 'dsh') {
-      const ctxWin = metric.windows[0];
+    const realWindows = this.getRealWindows(metric);
+    if (this.isSingleQuotaAgentMode(metric)) {
+      const w0 = realWindows[0];
       const left =
-        typeof ctxWin?.remainingPercent === 'number' && Number.isFinite(ctxWin.remainingPercent)
-          ? Math.max(0, Math.min(100, ctxWin.remainingPercent))
+        typeof w0?.remainingPercent === 'number' && Number.isFinite(w0.remainingPercent)
+          ? Math.max(0, Math.min(100, w0.remainingPercent))
           : this.displayedLeftQuota;
-      return { left, right: this.dshFreeLegQuota };
+      return this.syncSingleQuotaBothLegs ? { left, right: left } : { left, right: this.dshFreeLegQuota };
     }
 
-    const w0 = this.activeAgent === 'antigravity' ? metric.windows.find(w => w.id === '5h') : metric.windows[0];
-    const w1 = this.activeAgent === 'antigravity' ? metric.windows.find(w => w.id === 'weekly') : metric.windows[1];
+    const w0 =
+      this.activeAgent === 'antigravity'
+        ? realWindows.find((w) => w.id === '5h') ?? realWindows[0]
+        : realWindows[0];
+    const w1 =
+      this.activeAgent === 'antigravity'
+        ? realWindows.find((w) => w.id === 'weekly') ?? realWindows[1]
+        : realWindows[1];
     const left =
       typeof w0?.remainingPercent === 'number' && Number.isFinite(w0.remainingPercent)
         ? Math.max(0, Math.min(100, w0.remainingPercent))
@@ -692,13 +730,16 @@ class DesktopWidgetApp {
   private renderActiveAgentUI(): void {
     const meta = AGENT_META[this.activeAgent];
     const metric = this.metrics[this.activeAgent];
+    const realWindows = this.getRealWindows(metric);
+    const singleQuotaMode = this.isSingleQuotaAgentMode(metric);
+    const dualSyncActive = this.isDualLegSyncActive(metric);
 
     document.querySelectorAll<HTMLButtonElement>('.agent-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.agent === this.activeAgent);
     });
 
     this.simSlidersWrapEl.classList.toggle('hidden', this.activeAgent !== 'simulated');
-    this.dshFreeWrapEl.classList.toggle('hidden', this.activeAgent !== 'dsh');
+    this.dshFreeWrapEl.classList.toggle('hidden', !singleQuotaMode || this.syncSingleQuotaBothLegs);
     const canManualRefresh = this.activeAgent === 'codex' || this.activeAgent === 'antigravity';
     this.metricRefreshBtn.classList.toggle('hidden', !canManualRefresh);
     this.btnQuickRefreshEl.classList.toggle('hidden', !canManualRefresh);
@@ -707,6 +748,7 @@ class DesktopWidgetApp {
     const targets = this.computeTargetLegHeights();
     this.displayedLeftQuota = targets.left;
     this.displayedRightQuota = targets.right;
+    this.stage?.setDualLegSyncMode(dualSyncActive);
     this.stage?.setQuota('left', this.displayedLeftQuota);
     this.stage?.setQuota('right', this.displayedRightQuota);
 
@@ -740,11 +782,9 @@ class DesktopWidgetApp {
     if (this.activeAgent === 'simulated') {
       this.appendWindowRow('左腿（模拟短周期）', `${Math.round(this.simLeftQuota)}%`);
       this.appendWindowRow('右腿（模拟周额度）', `${Math.round(this.simRightQuota)}%`);
-    } else if (metric && metric.windows.length > 0 && status !== 'unavailable') {
-      for (const w of metric.windows) {
-        if (w.isFreePlay) {
-          this.appendWindowRow(w.label, `自由互动 (${Math.round(this.dshFreeLegQuota)}%)`);
-        } else if (typeof w.remainingPercent === 'number') {
+    } else if (metric && realWindows.length > 0 && status !== 'unavailable') {
+      for (const w of realWindows) {
+        if (typeof w.remainingPercent === 'number') {
           const pctStr = `剩 ${Math.round(w.remainingPercent)}%`;
           let sub = '';
           if (typeof w.usedTokens === 'number' && typeof w.capacityTokens === 'number') {
@@ -753,6 +793,13 @@ class DesktopWidgetApp {
             sub = w.resetDescription;
           }
           this.appendWindowRow(w.label, pctStr, sub);
+        }
+      }
+      if (singleQuotaMode) {
+        if (this.syncSingleQuotaBothLegs) {
+          this.appendWindowRow('双腿显示', '同步（一手拉一袜）');
+        } else {
+          this.appendWindowRow('右腿', `自由互动 (${Math.round(this.dshFreeLegQuota)}%)`);
         }
       }
     }
@@ -780,14 +827,21 @@ class DesktopWidgetApp {
       readoutText = `${meta.short} · 暂不可用`;
       outerRingPct = 0;
       innerRingPct = 0;
-    } else if (this.activeAgent === 'dsh') {
-      const rem = metric.windows[0]?.remainingPercent;
-      readoutText = `DSH ${rem !== undefined ? `${Math.round(rem)}%` : '--'} · 互动`;
-      outerRingPct = rem ?? 0;
-      innerRingPct = this.dshFreeLegQuota;
+    } else if (singleQuotaMode) {
+      const rem = realWindows[0]?.remainingPercent;
+      const remStr = rem !== undefined ? `${Math.round(rem)}%` : '--';
+      if (this.syncSingleQuotaBothLegs) {
+        readoutText = `${meta.short} ${remStr} · 同步`;
+        outerRingPct = rem ?? 0;
+        innerRingPct = rem ?? 0;
+      } else {
+        readoutText = `${meta.short} ${remStr} · 互动`;
+        outerRingPct = rem ?? 0;
+        innerRingPct = this.dshFreeLegQuota;
+      }
     } else {
-      const l = metric.windows[0]?.remainingPercent;
-      const r = metric.windows[1]?.remainingPercent;
+      const l = realWindows[0]?.remainingPercent;
+      const r = realWindows[1]?.remainingPercent;
       const lStr = l !== undefined ? `${Math.round(l)}%` : '--';
       const rStr = r !== undefined ? `${Math.round(r)}%` : '--';
       readoutText = `${meta.short} ${lStr} · ${rStr}`;
@@ -1108,6 +1162,12 @@ class DesktopWidgetApp {
       this.desktop?.setAutoExitWhenNoAgents(this.autoExitWhenNoAgents);
     });
 
+    this.chkSyncSingleLegsEl.addEventListener('change', () => {
+      this.syncSingleQuotaBothLegs = this.chkSyncSingleLegsEl.checked;
+      this.renderActiveAgentUI();
+      this.desktop?.setSyncSingleQuotaBothLegs(this.syncSingleQuotaBothLegs);
+    });
+
     this.btnDshPluginActionEl.addEventListener('click', () => {
       if (this.dshPluginStatus?.installed) {
         this.desktop?.uninstallDshPlugin();
@@ -1260,6 +1320,9 @@ class DesktopWidgetApp {
       this.hideTrayIcon = state.hideTrayIcon ?? this.hideTrayIcon;
       this.sentinelEnabled = state.sentinelEnabled ?? this.sentinelEnabled;
       this.autoExitWhenNoAgents = state.autoExitWhenNoAgents ?? this.autoExitWhenNoAgents;
+      if (typeof state.syncSingleQuotaBothLegs === 'boolean') {
+        this.syncSingleQuotaBothLegs = state.syncSingleQuotaBothLegs;
+      }
 
       if (modeChanged) {
         this.setModeLocal(state.mode, false);

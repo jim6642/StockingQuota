@@ -36,8 +36,10 @@ export interface PersistedWidgetState {
   activeAgent: AgentId;
   leftQuota: number;
   rightQuota: number;
-  /** Resting height of DSH's unbound free-play right leg */
+  /** Resting height of unbound free-play right leg (DSH / single-window Codex Pro when sync is off) */
   dshFreeLegQuota: number;
+  /** When an Agent only has 1 real quota window (DSH / Codex Pro), sync both legs together (true) or leave right leg free-play (false) */
+  syncSingleQuotaBothLegs: boolean;
   presetId: string;
   laceCuff: boolean;
   hostAnchors: Record<RealAgentId, HostAnchorConfig>;
@@ -222,6 +224,7 @@ const DEFAULT_STATE: PersistedWidgetState = {
   leftQuota: 82,
   rightQuota: 58,
   dshFreeLegQuota: 62,
+  syncSingleQuotaBothLegs: true,
   presetId: 'codex-white',
   laceCuff: false,
   hostAnchors: {
@@ -294,6 +297,10 @@ export class StateStore {
           leftQuota: clampPct(parsed.leftQuota ?? DEFAULT_STATE.leftQuota),
           rightQuota: clampPct(parsed.rightQuota ?? DEFAULT_STATE.rightQuota),
           dshFreeLegQuota: clampPct(parsed.dshFreeLegQuota ?? DEFAULT_STATE.dshFreeLegQuota),
+          syncSingleQuotaBothLegs:
+            typeof parsed.syncSingleQuotaBothLegs === 'boolean'
+              ? parsed.syncSingleQuotaBothLegs
+              : DEFAULT_STATE.syncSingleQuotaBothLegs,
           hostAnchors: {
             codex: { ...DEFAULT_HOST_ANCHORS.codex, ...(parsedAnchors.codex ?? {}) },
             dsh: { ...DEFAULT_HOST_ANCHORS.dsh, ...(parsedAnchors.dsh ?? {}) },

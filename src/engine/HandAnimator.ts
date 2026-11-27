@@ -1,5 +1,5 @@
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
-import { LegPhysics } from './LegPhysics';
+import { HandGripMode, LegPhysics } from './LegPhysics';
 import { StockingMesh } from './StockingMesh';
 import { AssetManifest } from './types';
 
@@ -94,13 +94,15 @@ export class HandAnimator {
     return { root, openSprite, gripSprite, shieldSprite };
   }
 
-  public update(physics: LegPhysics, stockingMesh: StockingMesh, dt: number): void {
+  public update(physics: LegPhysics, stockingMesh: StockingMesh, dt: number, mode: HandGripMode = 'both'): void {
     const engage = physics.handEngagement;
     const shield = physics.shieldEngagement;
     const combinedVisible = Math.max(engage, shield);
     const tension = physics.tension;
     const grab = physics.handGrabProgress;
     const t = physics.time;
+    const showLeft = mode !== 'right-only';
+    const showRight = mode !== 'left-only';
 
     if (combinedVisible < 0.008) {
       this.container.visible = false;
@@ -111,6 +113,8 @@ export class HandAnimator {
     }
 
     this.container.visible = true;
+    this.leftHand.root.visible = showLeft;
+    this.rightHand.root.visible = showRight;
 
     const isGripping = grab > 0.42 && shield < 0.35;
     if (isGripping && !this.wasGripping) {
@@ -150,10 +154,11 @@ export class HandAnimator {
     const shyFlutterY = Math.cos(t * 42.0) * 1.5 * shield;
 
     const shieldScale = Math.max(0.34, Math.min(0.46, (footPt.halfWidth * 2.0) / 215.0));
-    // Place both cupped hands flanking & slightly overlapping over the bare foot!
-    const shieldLX = footPt.x - footPt.halfWidth * 0.44 - shieldEase * 32 + shyFlutterX;
+    // Place cupped hand(s) cleanly over the bare foot (centered when one-hand-per-leg in synced mode!)
+    const shieldOffsetFrac = mode === 'both' ? 0.44 : 0.08;
+    const shieldLX = footPt.x - footPt.halfWidth * shieldOffsetFrac - shieldEase * 32 + shyFlutterX;
     const shieldLY = footPt.y + 4 - shieldEase * 88 + shyFlutterY;
-    const shieldRX = footPt.x + footPt.halfWidth * 0.44 + shieldEase * 32 - shyFlutterX;
+    const shieldRX = footPt.x + footPt.halfWidth * shieldOffsetFrac + shieldEase * 32 - shyFlutterX;
     const shieldRY = footPt.y + 4 - shieldEase * 88 - shyFlutterY;
 
     // Blend seamlessly between cuff-pulling & foot-shielding modes
@@ -216,8 +221,8 @@ export class HandAnimator {
     this.rightHand.gripSprite.alpha = gripAlpha;
     this.rightHand.shieldSprite.alpha = shieldAlpha;
 
-    // Draw cute anime effort / flustered panic accents cleanly OUTSIDE the hands
-    this.drawStrainAccents(t, tension, engage, shield, baseScale);
+    // Draw cute anime effort / flustered panic accents cleanly OUTSIDE the visible hand(s)
+    this.drawStrainAccents(t, tension, engage, shield, baseScale, showLeft, showRight);
   }
 
   private drawStrainAccents(
@@ -225,7 +230,9 @@ export class HandAnimator {
     tension: number,
     engage: number,
     shield: number,
-    scale: number
+    scale: number,
+    showLeft: boolean,
+    showRight: boolean
   ): void {
     const g = this.fxGraphics;
     g.clear();
@@ -237,7 +244,7 @@ export class HandAnimator {
 
     const pulse = 0.90 + 0.10 * Math.sin(t * (shield > 0.3 ? 28.0 : 22.0));
 
-    // Place effort lines well outside the outer edges of both hands (never overlapping skin!)
+    // Place effort lines well outside the outer edges of visible hand(s) (never overlapping skin!)
     const outOffsetX = (shield > 0.3 ? 175 : 145) * scale;
     const outOffsetY = (shield > 0.3 ? 72 : 108) * scale;
     const lx = this.smoothLeftX - outOffsetX;
@@ -246,15 +253,18 @@ export class HandAnimator {
     const ry = this.smoothRightY - outOffsetY;
 
     for (let i = 0; i < 3; i++) {
-      const aL = -2.75 + i * 0.44;
       const r0 = 8 * pulse;
       const r1 = (17 + (i === 1 ? 5 : 0)) * pulse;
-      g.moveTo(lx + Math.cos(aL) * r0, ly + Math.sin(aL) * r0);
-      g.lineTo(lx + Math.cos(aL) * r1, ly + Math.sin(aL) * r1);
-
-      const aR = -0.39 - i * 0.44;
-      g.moveTo(rx + Math.cos(aR) * r0, ry + Math.sin(aR) * r0);
-      g.lineTo(rx + Math.cos(aR) * r1, ry + Math.sin(aR) * r1);
+      if (showLeft) {
+        const aL = -2.75 + i * 0.44;
+        g.moveTo(lx + Math.cos(aL) * r0, ly + Math.sin(aL) * r0);
+        g.lineTo(lx + Math.cos(aL) * r1, ly + Math.sin(aL) * r1);
+      }
+      if (showRight) {
+        const aR = -0.39 - i * 0.44;
+        g.moveTo(rx + Math.cos(aR) * r0, ry + Math.sin(aR) * r0);
+        g.lineTo(rx + Math.cos(aR) * r1, ry + Math.sin(aR) * r1);
+      }
     }
     g.stroke({
       width: 2.2,
@@ -265,7 +275,7 @@ export class HandAnimator {
 
     // Cute trembling anime sweat drop floating cleanly outside the right wrist
     const sweatAlpha = Math.max(smoothstep(0.50, 0.85, tension) * pullFx, shieldFx * 0.95);
-    if (sweatAlpha > 0.04) {
+    if (showRight && sweatAlpha > 0.04) {
       const sx = rx + 14;
       const sy = ry - 18 + Math.sin(t * 16.0) * 2.5;
       const s = 7.5;

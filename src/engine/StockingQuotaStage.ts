@@ -76,6 +76,8 @@ export class StockingQuotaStage {
   private rightRig!: LegRig;
 
   private activeDragLeg: LegRig | null = null;
+  private secondaryDragLeg: LegRig | null = null;
+  private dualLegSyncMode = false;
   private activePointerId: number | null = null;
   private hoveredLeg: LegSide | null = null;
 
@@ -312,7 +314,16 @@ export class StockingQuotaStage {
 
       this.activeDragLeg = hit.rig;
       this.activePointerId = e.pointerId;
-      hit.rig.physics.startDrag(pt.x, pt.y, hit.grabU);
+      if (this.dualLegSyncMode) {
+        const other = hit.rig.side === 'left' ? this.rightRig : this.leftRig;
+        const mirrorU = Math.max(0.05, Math.min(0.95, 1 - hit.grabU));
+        hit.rig.physics.startDrag(pt.x, pt.y, hit.grabU, hit.rig.side === 'left' ? 'left-only' : 'right-only');
+        other.physics.startDrag(pt.x, pt.y, mirrorU, other.side === 'left' ? 'left-only' : 'right-only');
+        this.secondaryDragLeg = other;
+      } else {
+        hit.rig.physics.startDrag(pt.x, pt.y, hit.grabU, 'both');
+        this.secondaryDragLeg = null;
+      }
       canvas.setPointerCapture(e.pointerId);
       canvas.style.cursor = 'grabbing';
       this.onInteractionStart?.(hit.rig.side);
@@ -323,6 +334,7 @@ export class StockingQuotaStage {
 
       if (this.activeDragLeg && e.pointerId === this.activePointerId) {
         this.activeDragLeg.physics.updateDrag(pt.x, pt.y);
+        this.secondaryDragLeg?.physics.updateDrag(pt.x, pt.y);
         canvas.style.cursor = 'grabbing';
         return;
       }
@@ -342,7 +354,9 @@ export class StockingQuotaStage {
       if (this.activeDragLeg && e.pointerId === this.activePointerId) {
         const finishedSide = this.activeDragLeg.side;
         this.activeDragLeg.physics.endDrag();
+        this.secondaryDragLeg?.physics.endDrag();
         this.activeDragLeg = null;
+        this.secondaryDragLeg = null;
         this.activePointerId = null;
         if (canvas.hasPointerCapture(e.pointerId)) {
           canvas.releasePointerCapture(e.pointerId);
@@ -399,7 +413,8 @@ export class StockingQuotaStage {
         sockAlpha,
         time: rig.physics.time,
       });
-      rig.hands.update(rig.physics, rig.mesh, dt);
+      const handMode = this.dualLegSyncMode ? (rig.side === 'left' ? 'left-only' : 'right-only') : 'both';
+      rig.hands.update(rig.physics, rig.mesh, dt, handMode);
     }
 
     this.renderHoverIndicator();
@@ -430,17 +445,26 @@ export class StockingQuotaStage {
     g.clear();
     if (!this.hoveredLeg || this.activeDragLeg) return;
 
-    const rig = this.hoveredLeg === 'left' ? this.leftRig : this.rightRig;
-    if (rig.physics.slipOffProgress > 0.65 || rig.physics.smoothedQuotaPct >= 97) return;
-    const steps = 16;
-    for (let i = 0; i <= steps; i++) {
-      const u = i / steps;
-      const pt = rig.mesh.getCuffPoint(rig.physics, u);
-      const wrapY = Math.sin(u * Math.PI) * 3.0;
-      if (i === 0) g.moveTo(pt.x, pt.y + wrapY);
-      else g.lineTo(pt.x, pt.y + wrapY);
+    const targetRigs = this.dualLegSyncMode
+      ? [this.leftRig, this.rightRig]
+      : [this.hoveredLeg === 'left' ? this.leftRig : this.rightRig];
+
+    let drewAny = false;
+    for (const rig of targetRigs) {
+      if (rig.physics.slipOffProgress > 0.65 || rig.physics.smoothedQuotaPct >= 97) continue;
+      const steps = 16;
+      for (let i = 0; i <= steps; i++) {
+        const u = i / steps;
+        const pt = rig.mesh.getCuffPoint(rig.physics, u);
+        const wrapY = Math.sin(u * Math.PI) * 3.0;
+        if (i === 0) g.moveTo(pt.x, pt.y + wrapY);
+        else g.lineTo(pt.x, pt.y + wrapY);
+      }
+      drewAny = true;
     }
-    g.stroke({ width: 3.0, color: 0xffffff, alpha: 0.42, cap: 'round' });
+    if (drewAny) {
+      g.stroke({ width: 3.0, color: 0xffffff, alpha: 0.42, cap: 'round' });
+    }
   }
 
   // =========================================================================
@@ -458,6 +482,26 @@ export class StockingQuotaStage {
     return rig ? rig.physics.targetQuotaPct : 0;
   }
 
+  /**
+   * When true (single-window quota synced to both legs, e.g. DSH / Codex Pro),
+   * dragging either stocking pulls BOTH stockings together with 1 hand per stocking!
+   */
+  public setDualLegSyncMode(enabled: boolean): void {
+    if (enabled === this.dualLegSyncMode) return;
+    if (this.activeDragLeg) {
+      this.cancelActiveDrag();
+    }
+    this.dualLegSyncMode = enabled;
+    if (this.leftRig && this.rightRig) {
+      this.leftRig.physics.handMode = enabled ? 'left-only' : 'both';
+      this.rightRig.physics.handMode = enabled ? 'right-only' : 'both';
+    }
+  }
+
+  public isDualLegSyncMode(): boolean {
+    return this.dualLegSyncMode;
+  }
+
   public isStockingDragging(): boolean {
     return this.activeDragLeg !== null;
   }
@@ -467,7 +511,9 @@ export class StockingQuotaStage {
     if (!this.activeDragLeg) return;
     const finishedSide = this.activeDragLeg.side;
     this.activeDragLeg.physics.endDrag();
+    this.secondaryDragLeg?.physics.endDrag();
     this.activeDragLeg = null;
+    this.secondaryDragLeg = null;
     this.activePointerId = null;
     this.app.canvas.style.cursor = 'default';
     this.onInteractionEnd?.(finishedSide);
@@ -576,8 +622,12 @@ export class StockingQuotaStage {
   public triggerDemoPull(side: LegSide, pullDistancePx = 220, grabU = 0.35, holdMs = 850): void {
     const rig = side === 'left' ? this.leftRig : this.rightRig;
     if (!rig) return;
+    const other = this.dualLegSyncMode ? (side === 'left' ? this.rightRig : this.leftRig) : null;
     const pt = rig.mesh.getCuffPoint(rig.physics, grabU);
-    rig.physics.startDrag(pt.x, pt.y, grabU);
+    rig.physics.startDrag(pt.x, pt.y, grabU, this.dualLegSyncMode ? (side === 'left' ? 'left-only' : 'right-only') : 'both');
+    if (other) {
+      other.physics.startDrag(pt.x, pt.y, Math.max(0.05, Math.min(0.95, 1 - grabU)), other.side === 'left' ? 'left-only' : 'right-only');
+    }
 
     const startTime = performance.now();
     const rampMs = 420;
@@ -586,12 +636,16 @@ export class StockingQuotaStage {
       const elapsed = performance.now() - startTime;
       const p = Math.min(1, elapsed / rampMs);
       const ease = 1 - Math.pow(1 - p, 3);
-      rig.physics.updateDrag(pt.x + (grabU - 0.5) * 28 * ease, pt.y + pullDistancePx * ease);
+      const nextX = pt.x + (grabU - 0.5) * 28 * ease;
+      const nextY = pt.y + pullDistancePx * ease;
+      rig.physics.updateDrag(nextX, nextY);
+      other?.physics.updateDrag(nextX, nextY);
 
       if (elapsed < holdMs) {
         requestAnimationFrame(stepAnim);
       } else {
         rig.physics.endDrag();
+        other?.physics.endDrag();
       }
     };
     requestAnimationFrame(stepAnim);

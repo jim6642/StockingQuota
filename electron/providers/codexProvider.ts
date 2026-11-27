@@ -108,14 +108,41 @@ export async function runCodexBarCli(
   return parsed;
 }
 
-function toWindow(id: string, defaultLabel: string, raw?: CodexBarWindow | null): AgentMetricWindow | null {
+function describeCodexWindow(
+  windowMinutes: number | null | undefined,
+  fallbackId: string,
+  fallbackLabel: string,
+): { id: string; label: string } {
+  if (typeof windowMinutes === 'number' && Number.isFinite(windowMinutes) && windowMinutes > 0) {
+    if (windowMinutes <= 90) {
+      const mins = Math.round(windowMinutes);
+      return { id: 'short', label: mins === 60 ? '1H 会话' : `${mins}m 会话` };
+    }
+    if (windowMinutes <= 420) {
+      const hrs = Math.max(1, Math.round(windowMinutes / 60));
+      return { id: '5h', label: `${hrs}H 会话` };
+    }
+    if (windowMinutes <= 1600) {
+      const hrs = Math.round(windowMinutes / 60);
+      return { id: 'daily', label: hrs === 24 ? '日额度' : `${hrs}H 额度` };
+    }
+    if (windowMinutes <= 12000) {
+      return { id: 'weekly', label: '周额度' };
+    }
+    return { id: 'monthly', label: '月额度' };
+  }
+  return { id: fallbackId, label: fallbackLabel };
+}
+
+function toWindow(defaultId: string, defaultLabel: string, raw?: CodexBarWindow | null): AgentMetricWindow | null {
   if (!raw || raw.is_informational) return null;
   if (typeof raw.used_percent !== 'number' || !Number.isFinite(raw.used_percent)) return null;
   const used = clampPercent(raw.used_percent);
   const remaining = clampPercent(100 - used);
+  const desc = describeCodexWindow(raw.window_minutes, defaultId, defaultLabel);
   return {
-    id,
-    label: defaultLabel,
+    id: desc.id,
+    label: desc.label,
     usedPercent: used,
     remainingPercent: remaining,
     resetAt: raw.resets_at ?? undefined,
@@ -174,9 +201,10 @@ function readCodexSessionRateLimitsFallback(): AgentMetric | null {
           const windows: AgentMetricWindow[] = [];
           if (typeof rl.primary?.used_percent === 'number') {
             const u = clampPercent(rl.primary.used_percent);
+            const desc = describeCodexWindow(rl.primary.window_minutes, '5h', '5H 会话');
             windows.push({
-              id: '5h',
-              label: '5H 会话',
+              id: desc.id,
+              label: desc.label,
               usedPercent: u,
               remainingPercent: clampPercent(100 - u),
               resetAt: rl.primary.resets_at ? new Date(rl.primary.resets_at * 1000).toISOString() : undefined,
@@ -184,9 +212,10 @@ function readCodexSessionRateLimitsFallback(): AgentMetric | null {
           }
           if (typeof rl.secondary?.used_percent === 'number') {
             const u = clampPercent(rl.secondary.used_percent);
+            const desc = describeCodexWindow(rl.secondary.window_minutes, 'weekly', '周额度');
             windows.push({
-              id: 'weekly',
-              label: '周额度',
+              id: desc.id,
+              label: desc.label,
               usedPercent: u,
               remainingPercent: clampPercent(100 - u),
               resetAt: rl.secondary.resets_at ? new Date(rl.secondary.resets_at * 1000).toISOString() : undefined,
