@@ -238,13 +238,13 @@ internal static class Program
                         }
                     }
 
-                    if (++loopsSinceTrim >= 24)
+                    if (++loopsSinceTrim >= 60)
                     {
                         loopsSinceTrim = 0;
                         TrimMemory();
                     }
 
-                    if (stopEvent.WaitOne(2500)) break;
+                    if (stopEvent.WaitOne(1000)) break;
                 }
             }
         }

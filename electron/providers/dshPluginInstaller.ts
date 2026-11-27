@@ -71,6 +71,30 @@ function copyDirRecursive(src: string, dst: string): void {
   }
 }
 
+/**
+ * Safely removes a directory junction/symlink WITHOUT following it into the target directory!
+ * CRITICAL on Windows: Electron's asar-patched `fs.rmSync(junction, { recursive: true })` can delete
+ * the junction target's contents! Always use `lstatSync` + `rmdirSync`/`unlinkSync` for junctions.
+ */
+function safeRemoveJunctionOrDir(targetPath: string): void {
+  try {
+    const st = fs.lstatSync(targetPath);
+    if (st.isSymbolicLink()) {
+      try {
+        fs.unlinkSync(targetPath);
+      } catch {
+        fs.rmdirSync(targetPath);
+      }
+    } else if (st.isDirectory()) {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(targetPath);
+    }
+  } catch {
+    // ENOENT or already removed
+  }
+}
+
 function updateDshProfile(dshHome: string, profileName: string, dstPluginDir: string, remove: boolean): boolean {
   const profDir = path.join(dshHome, 'profiles', profileName);
   const pkgPath = path.join(profDir, 'package.json');
@@ -98,11 +122,7 @@ function updateDshProfile(dshHome: string, profileName: string, dstPluginDir: st
   if (remove) {
     delete pkg.dependencies[PLUGIN_NAME];
     pkg.dsh.profile.bundles = bundles.filter((b) => b !== PLUGIN_NAME);
-    try {
-      if (fs.existsSync(nmLink)) fs.rmSync(nmLink, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    safeRemoveJunctionOrDir(nmLink);
   } else {
     const linkVal = `link:${dstPluginDir.replace(/\\/g, '/')}`;
     pkg.dependencies[PLUGIN_NAME] = linkVal;
@@ -112,12 +132,24 @@ function updateDshProfile(dshHome: string, profileName: string, dstPluginDir: st
     pkg.dsh.profile.bundles = bundles;
 
     if (fs.existsSync(nmDir)) {
+      // Check if an existing junction already points directly to dstPluginDir -> leave it intact!
+      let alreadyLinked = false;
       try {
-        if (fs.existsSync(nmLink)) fs.rmSync(nmLink, { recursive: true, force: true });
-        fs.symlinkSync(dstPluginDir, nmLink, 'junction');
+        const st = fs.lstatSync(nmLink);
+        if (st.isSymbolicLink() && fs.realpathSync(nmLink).toLowerCase() === path.resolve(dstPluginDir).toLowerCase()) {
+          alreadyLinked = true;
+        }
       } catch {
-        // Fallback: copy directly if symlink/junction blocked by policy
-        copyDirRecursive(dstPluginDir, nmLink);
+        // not linked yet
+      }
+
+      if (!alreadyLinked) {
+        safeRemoveJunctionOrDir(nmLink);
+        try {
+          fs.symlinkSync(dstPluginDir, nmLink, 'junction');
+        } catch {
+          copyDirRecursive(dstPluginDir, nmLink);
+        }
       }
     }
   }
@@ -163,8 +195,14 @@ export function ensureDshBridgeInstalled(appRoot: string, forceReinstall = false
     // ignore
   }
 
-  // Check if already up-to-date and registered in desktop profile
-  if (!forceReinstall && fs.existsSync(path.join(dstDir, 'package.json')) && fs.existsSync(path.join(dstDir, 'cordis.patch.yml'))) {
+  // Check if already up-to-date, complete on disk, AND registered in desktop profile
+  if (
+    !forceReinstall &&
+    fs.existsSync(path.join(dstDir, 'package.json')) &&
+    fs.existsSync(path.join(dstDir, 'lib', 'index.js')) &&
+    fs.existsSync(path.join(dstDir, 'lib', 'client.js')) &&
+    fs.existsSync(path.join(dstDir, 'cordis.patch.yml'))
+  ) {
     try {
       const dstPkg = JSON.parse(fs.readFileSync(path.join(dstDir, 'package.json'), 'utf8')) as { version?: string };
       const patchRaw = fs.readFileSync(path.join(dstDir, 'cordis.patch.yml'), 'utf8');
@@ -204,6 +242,12 @@ export function ensureDshBridgeInstalled(appRoot: string, forceReinstall = false
 
     updateDshProfile(dshHome, 'desktop', dstDir, false);
     updateDshProfile(dshHome, 'web', dstDir, false);
+
+    // Final integrity check: guarantee plugin files exist on disk after profile linking!
+    if (!fs.existsSync(path.join(dstDir, 'package.json')) || !fs.existsSync(path.join(dstDir, 'lib', 'index.js'))) {
+      copyDirRecursive(srcDir, dstDir);
+      fs.writeFileSync(path.join(dstDir, 'cordis.patch.yml'), patchText, 'utf8');
+    }
 
     return {
       dshDetected: true,

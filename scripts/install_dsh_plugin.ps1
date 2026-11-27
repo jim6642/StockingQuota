@@ -39,7 +39,10 @@ function Update-DshProfile($profileName, $remove) {
     $pkg.dependencies.PSObject.Properties.Remove($pluginName)
     $bundles = @($bundles | Where-Object { $_ -ne $pluginName })
     $nmLink = Join-Path $profDir "node_modules\$pluginName"
-    if (Test-Path $nmLink) { Remove-Item $nmLink -Recurse -Force }
+    if (Test-Path $nmLink) {
+      if ((Get-Item $nmLink -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { [IO.Directory]::Delete($nmLink, $false) }
+      else { Remove-Item $nmLink -Recurse -Force }
+    }
   } else {
     $pkg.dependencies | Add-Member -Force -NotePropertyName $pluginName -NotePropertyValue $linkVal
     if ($bundles -notcontains $pluginName) {
@@ -48,7 +51,10 @@ function Update-DshProfile($profileName, $remove) {
     $nmDir = Join-Path $profDir "node_modules"
     if (Test-Path $nmDir) {
       $nmLink = Join-Path $nmDir $pluginName
-      if (Test-Path $nmLink) { Remove-Item $nmLink -Recurse -Force }
+      if (Test-Path $nmLink) {
+        if ((Get-Item $nmLink -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { [IO.Directory]::Delete($nmLink, $false) }
+        else { Remove-Item $nmLink -Recurse -Force }
+      }
       New-Item -ItemType Junction -Path $nmLink -Target $dstDir | Out-Null
     }
   }

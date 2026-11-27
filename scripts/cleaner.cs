@@ -272,41 +272,47 @@ internal static class Program
         string startMenu = Path.Combine(appData, @"Microsoft\Windows\Start Menu\Programs");
 
         // 1. Run NSIS silent uninstaller if installed via StockingQuota-Setup.exe
-        string installDir = Path.Combine(localAppData, "Programs", "StockingQuota");
-        string uninstaller = Path.Combine(installDir, "Uninstall StockingQuota.exe");
+        string[] installDirs = new[]
+        {
+            Path.Combine(localAppData, "Programs", "stocking-quota-lab"),
+            Path.Combine(localAppData, "Programs", "StockingQuota")
+        };
         bool removedApp = false;
 
-        if (File.Exists(uninstaller))
+        foreach (string installDir in installDirs)
         {
-            try
+            string uninstaller = Path.Combine(installDir, "Uninstall StockingQuota.exe");
+            if (File.Exists(uninstaller))
             {
-                Process p = Process.Start(new ProcessStartInfo
+                try
                 {
-                    FileName = uninstaller,
-                    Arguments = "/S",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                });
-                if (p != null)
-                {
-                    p.WaitForExit(15000);
-                    p.Dispose();
+                    Process p = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = uninstaller,
+                        Arguments = "/S",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    });
+                    if (p != null)
+                    {
+                        p.WaitForExit(15000);
+                        p.Dispose();
+                    }
+                    removedApp = true;
                 }
-                removedApp = true;
+                catch { }
             }
-            catch { }
-        }
 
-        // Fallback cleanup if folder still exists
-        if (Directory.Exists(installDir))
-        {
-            try
+            if (Directory.Exists(installDir))
             {
-                Thread.Sleep(400);
-                Directory.Delete(installDir, true);
-                removedApp = true;
+                try
+                {
+                    Thread.Sleep(400);
+                    Directory.Delete(installDir, true);
+                    removedApp = true;
+                }
+                catch { }
             }
-            catch { }
         }
 
         // Remove updater cache & shortcuts
