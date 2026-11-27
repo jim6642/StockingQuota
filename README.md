@@ -10,6 +10,7 @@
 直接下载并双击以下任意一个产物即可，**全程免管理员权限、无命令行黑框、无需手动跑任何脚本**：
 - **一键安装包**：`release/StockingQuota-Setup-1.0.0.exe`（3 秒安装完成并自动启动）
 - **单文件便携版**：`release/StockingQuota-1.0.0-Portable.exe`（免安装随拷随走）
+- **一键彻底清理/卸载工具**：`release/StockingQuota-Cleaner.exe`（一键停止全部进程、清除哨兵自启、无损移除 DSH 蓝丝插件并恢复干净环境，绝不影响 Codex / Antigravity / DSH 本体与聊天数据）
 
 首次运行后程序会自动完成全部配置：
 1. **自动检测本机 Agent**：设置界面只显示你电脑上实际安装的 Agent（外加离线模拟调试模式）。
