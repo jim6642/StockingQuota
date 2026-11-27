@@ -26,12 +26,22 @@ export interface AgentMetric {
   windows: AgentMetricWindow[];
 }
 
+export interface DshMeterViewportRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  viewportW: number;
+  viewportH: number;
+}
+
 export interface DshContextPushPayload {
   sessionId?: string;
   model?: string;
   projectedTokens?: number | null;
   pressureTokens?: number | null;
   contextWindow?: number | null;
+  meterRect?: DshMeterViewportRect | null;
   updatedAt?: string;
 }
 

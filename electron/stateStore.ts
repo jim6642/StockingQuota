@@ -28,6 +28,7 @@ export interface PersistedWidgetState {
   hideTrayIcon: boolean;
   sentinelEnabled: boolean;
   autoExitWhenNoAgents: boolean;
+  firstRunCompleted: boolean;
   visible: boolean;
   sizePreset: WidgetSizePreset;
   /** Continuous overall widget scale percentage [65..150] (100 = 336x486) */
@@ -213,6 +214,7 @@ const DEFAULT_STATE: PersistedWidgetState = {
   hideTrayIcon: true,
   sentinelEnabled: true,
   autoExitWhenNoAgents: false,
+  firstRunCompleted: false,
   visible: true,
   sizePreset: 'medium',
   scalePct: 100,
@@ -266,6 +268,10 @@ export class StateStore {
             typeof parsed.autoExitWhenNoAgents === 'boolean'
               ? parsed.autoExitWhenNoAgents
               : DEFAULT_STATE.autoExitWhenNoAgents,
+          firstRunCompleted:
+            typeof parsed.firstRunCompleted === 'boolean'
+              ? parsed.firstRunCompleted
+              : true, // Existing upgraded users already ran the app before!
           sizePreset:
             parsed.sizePreset === 'compact' || parsed.sizePreset === 'medium' || parsed.sizePreset === 'large'
               ? parsed.sizePreset

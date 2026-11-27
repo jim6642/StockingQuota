@@ -83,12 +83,31 @@ export function apply(ctx, config = {}) {
               chunks.push(chunk);
             }
             const raw = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            const mr = raw.meterRect && typeof raw.meterRect === 'object' ? raw.meterRect : null;
+            const meterRect =
+              mr &&
+              typeof mr.x === 'number' &&
+              typeof mr.y === 'number' &&
+              typeof mr.width === 'number' &&
+              typeof mr.height === 'number' &&
+              typeof mr.viewportW === 'number' &&
+              typeof mr.viewportH === 'number'
+                ? {
+                    x: Math.round(mr.x),
+                    y: Math.round(mr.y),
+                    width: Math.round(mr.width),
+                    height: Math.round(mr.height),
+                    viewportW: Math.round(mr.viewportW),
+                    viewportH: Math.round(mr.viewportH),
+                  }
+                : null;
             const sanitized = {
               sessionId: typeof raw.sessionId === 'string' ? raw.sessionId.slice(0, 128) : undefined,
               model: typeof raw.model === 'string' ? raw.model.slice(0, 128) : undefined,
               projectedTokens: typeof raw.projectedTokens === 'number' ? raw.projectedTokens : null,
               pressureTokens: typeof raw.pressureTokens === 'number' ? raw.pressureTokens : null,
               contextWindow: typeof raw.contextWindow === 'number' ? raw.contextWindow : null,
+              meterRect,
               updatedAt: new Date().toISOString(),
             };
 

@@ -1,10 +1,10 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, Tray } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, Tray } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DetectedAgentInfo, detectLocalAgents } from './providers/agentDetector';
 import { AgentManager } from './providers/agentManager';
 import { DshPluginInstallStatus, ensureDshBridgeInstalled, uninstallDshBridge } from './providers/dshPluginInstaller';
-import { AGENT_BINDINGS, AgentId } from './providers/types';
+import { AGENT_BINDINGS, AgentId, DshMeterViewportRect } from './providers/types';
 import { QuotaBridge } from './quotaBridge';
 import { disableSentinel, enableSentinel, stopSentinelProcess } from './sentinelManager';
 import {
@@ -55,6 +55,25 @@ let antigravityClickUntil = 0;
 let antigravityMustLeaveHotspot = false;
 let codexClickUntil = 0;
 let codexMustLeaveHotspot = false;
+let lastDshMeterRect: DshMeterViewportRect | null = null;
+
+function computeDshMeterButtonDip(
+  hostRectDip: Electron.Rectangle,
+  meter: DshMeterViewportRect | null
+): Electron.Rectangle | null {
+  if (!meter || meter.viewportW < 100 || meter.viewportH < 100) return null;
+  if (meter.width <= 0 || meter.height <= 0) return null;
+  // Bottom-aligned scale mapping: completely eliminates titlebar height ambiguity & tracks right/left split-pane toggles!
+  const scale = hostRectDip.width / Math.max(1, meter.viewportW);
+  const distFromBottom = meter.viewportH - meter.y;
+  const x = Math.round(hostRectDip.x + meter.x * scale);
+  const y = Math.round(hostRectDip.y + hostRectDip.height - distFromBottom * scale);
+  const width = Math.max(24, Math.round(meter.width * scale));
+  const height = Math.max(18, Math.round(meter.height * scale));
+  if (x < hostRectDip.x - 20 || x > hostRectDip.x + hostRectDip.width + 20) return null;
+  if (y < hostRectDip.y - 20 || y > hostRectDip.y + hostRectDip.height + 20) return null;
+  return { x, y, width, height };
+}
 
 // Optional auto-exit timer when user enables "随 Agent 关闭自动退出"
 let sawAnyRunningAgent = false;
@@ -316,7 +335,9 @@ function startHostCalibration(agent: RealAgentId): void {
           ? snap.antigravityModelButtonDip
           : target === 'codex'
             ? snap.codexQuotaButtonDip
-            : null;
+            : target === 'dsh'
+              ? computeDshMeterButtonDip(hostRect, lastDshMeterRect)
+              : null;
       const spot = resolveHostHotspotDip(hostRect, nextAnchor, uiaBtn, target);
       showHostPopup(target, resolvePopupBoundsForHotspot(spot, nextAnchor.corner, target));
     });
@@ -415,7 +436,9 @@ function startCursorBoundaryGuard(): void {
             ? snap.antigravityModelButtonDip
             : hostAgent === 'codex'
               ? snap.codexQuotaButtonDip
-              : null;
+              : hostAgent === 'dsh'
+                ? computeDshMeterButtonDip(hostRect, lastDshMeterRect)
+                : null;
         const spot = resolveHostHotspotDip(hostRect, anchor, uiaButton, hostAgent);
 
         // If UIA is active on Codex and the sidebar/button is hidden offscreen, don't phantom-trigger on empty space!
@@ -1039,7 +1062,12 @@ app.whenReady().then(() => {
     rebuildTrayMenu();
   });
   quotaBridge.startLocalBridge(17821, {
-    onDshContextPush: (payload) => agentManager.ingestDshContext(payload),
+    onDshContextPush: (payload) => {
+      if (payload.meterRect && typeof payload.meterRect.viewportW === 'number' && payload.meterRect.viewportW >= 100) {
+        lastDshMeterRect = payload.meterRect;
+      }
+      return agentManager.ingestDshContext(payload);
+    },
     onExternalMetricPush: (metric) => agentManager.ingestExternalMetric(metric),
     getAllMetrics: () => agentManager.getAllMetrics(),
   });
@@ -1059,6 +1087,41 @@ app.whenReady().then(() => {
   globalShortcut.register('CommandOrControl+Alt+S', () => {
     summonWidgetAndSettings();
   });
+
+  // First-run friendly "Install Succeeded!" confirmation dialog (never shown on silent sentinel launches)
+  if (!init.firstRunCompleted && !cliSilent) {
+    store.update({ firstRunCompleted: true }, true);
+    const foundNames = detectedAgents
+      .filter((a) => a.installed)
+      .map((a) => AGENT_BINDINGS[a.id].displayName);
+    const lines: string[] = [
+      foundNames.length > 0
+        ? `• 已自动检测到本机 Agent：${foundNames.join(' / ')}`
+        : '• 暂未检测到本地 Agent（可先使用内置模拟模式体验）',
+    ];
+    if (dshPluginStatus.dshDetected) {
+      lines.push(
+        dshPluginStatus.installed
+          ? '• 已自动配置 DeepSeek Harness 蓝丝桥接插件（重启一次 DSH 即可实时同步）'
+          : `• DSH 插件状态：${dshPluginStatus.message}`
+      );
+    }
+    if (store.get().sentinelEnabled) {
+      lines.push('• 已启用 4.6MB 极轻哨兵：以后打开 Codex / Antigravity / DSH 将自动静默激活');
+    }
+    lines.push('• 默认隐身无托盘图标，把鼠标悬停到各软件的额度/切模型按钮即可弹出丝袜');
+    lines.push('• 任何时候按快捷键 Ctrl + Alt + S 即可呼出设置面板或退出程序');
+
+    setTimeout(() => {
+      void dialog.showMessageBox({
+        type: 'info',
+        title: 'StockingQuota 安装成功',
+        message: 'StockingQuota 已安装成功并开始运行！',
+        detail: lines.join('\n'),
+        buttons: ['开始使用'],
+      });
+    }, 600);
+  }
 });
 
 app.on('before-quit', () => {
