@@ -2,7 +2,10 @@
  * dsh-stocking-quota-bridge (Host half — Node ESM).
  * 1. Receives sanitized numeric contextPressure snapshots from the browser half
  *    and forwards them to StockingQuota's loopback-only HTTP endpoint (127.0.0.1:17821).
- * 2. Optionally auto-launches StockingQuota.exe silently (`--silent --from-agent=dsh`)
+ * 2. Keeps the latest sanitized snapshot in memory and automatically re-syncs to StockingQuota
+ *    every few seconds so even if StockingQuota is started or restarted AFTER DSH is already open,
+ *    DSH recovers from "unavailable" automatically without switching chats!
+ * 3. Optionally auto-launches StockingQuota.exe silently (`--silent --from-agent=dsh`)
  *    when DeepSeek Harness starts — zero Windows boot startup needed!
  * Never accesses credentials, API keys, or conversation text.
  */
@@ -15,7 +18,6 @@ const DEFAULT_TARGET = 'http://127.0.0.1:17821/dsh/context';
 
 async function maybeAutoLaunchStockingQuota(exePath) {
   if (typeof exePath !== 'string' || !exePath || !existsSync(exePath)) return;
-  // Check if StockingQuota is already listening on loopback
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 400);
   try {
@@ -39,6 +41,24 @@ async function maybeAutoLaunchStockingQuota(exePath) {
   }
 }
 
+async function forwardSnapshot(targetUrl, snapshot) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 1200);
+  try {
+    const res = await fetch(targetUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(snapshot),
+      signal: ctrl.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function apply(ctx, config = {}) {
   const targetUrl =
     typeof config?.targetUrl === 'string' && config.targetUrl.startsWith('http://127.0.0.1:')
@@ -53,6 +73,25 @@ export function apply(ctx, config = {}) {
 
   ctx.inject(['webServer'], (scope) => {
     try {
+      let lastSanitized = null;
+      let lastDeliveredOk = false;
+
+      // Auto-resync loop: if StockingQuota restarts or starts after DSH, re-deliver the latest
+      // snapshot automatically (every 4s while disconnected, every 12s while connected).
+      let tickCount = 0;
+      const heartbeat = setInterval(() => {
+        if (!lastSanitized) return;
+        tickCount++;
+        if (!lastDeliveredOk || tickCount % 3 === 0) {
+          void forwardSnapshot(targetUrl, lastSanitized).then((ok) => {
+            lastDeliveredOk = ok;
+          });
+        }
+      }, 4000);
+      if (typeof heartbeat.unref === 'function') heartbeat.unref();
+
+      scope.effect(() => () => clearInterval(heartbeat), 'dsh-stocking-quota-bridge: heartbeat');
+
       const route = {
         name: 'dsh-stocking-quota-context',
         kind: 'exact',
@@ -111,19 +150,9 @@ export function apply(ctx, config = {}) {
               updatedAt: new Date().toISOString(),
             };
 
-            const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 1200);
-            try {
-              await fetch(targetUrl, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify(sanitized),
-                signal: ctrl.signal,
-              });
-            } finally {
-              clearTimeout(timer);
-            }
-            send(200, { ok: true });
+            lastSanitized = sanitized;
+            lastDeliveredOk = await forwardSnapshot(targetUrl, sanitized);
+            send(200, { ok: lastDeliveredOk });
           } catch {
             send(200, { ok: false });
           }
