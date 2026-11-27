@@ -1,0 +1,118 @@
+/**
+ * dsh-stocking-quota-bridge (Host half — Node ESM).
+ * 1. Receives sanitized numeric contextPressure snapshots from the browser half
+ *    and forwards them to StockingQuota's loopback-only HTTP endpoint (127.0.0.1:17821).
+ * 2. Optionally auto-launches StockingQuota.exe silently (`--silent --from-agent=dsh`)
+ *    when DeepSeek Harness starts — zero Windows boot startup needed!
+ * Never accesses credentials, API keys, or conversation text.
+ */
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+
+export const name = 'dsh-stocking-quota-bridge';
+
+const DEFAULT_TARGET = 'http://127.0.0.1:17821/dsh/context';
+
+async function maybeAutoLaunchStockingQuota(exePath) {
+  if (typeof exePath !== 'string' || !exePath || !existsSync(exePath)) return;
+  // Check if StockingQuota is already listening on loopback
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 400);
+  try {
+    const res = await fetch('http://127.0.0.1:17821/metrics', { signal: ctrl.signal });
+    if (res.ok) return;
+  } catch {
+    // Not running yet -> spawn silently!
+  } finally {
+    clearTimeout(timer);
+  }
+
+  try {
+    const child = spawn(exePath, ['--silent', '--from-agent=dsh'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+  } catch {
+    // Never interrupt DSH startup if launch fails
+  }
+}
+
+export function apply(ctx, config = {}) {
+  const targetUrl =
+    typeof config?.targetUrl === 'string' && config.targetUrl.startsWith('http://127.0.0.1:')
+      ? config.targetUrl
+      : DEFAULT_TARGET;
+
+  if (config?.autoLaunch !== false && typeof config?.stockingQuotaExe === 'string') {
+    void maybeAutoLaunchStockingQuota(config.stockingQuotaExe);
+  }
+
+  if (typeof ctx.inject !== 'function') return;
+
+  ctx.inject(['webServer'], (scope) => {
+    try {
+      const route = {
+        name: 'dsh-stocking-quota-context',
+        kind: 'exact',
+        path: '/dsh-stocking-quota/context',
+        handler: async (req, res) => {
+          const send = (status, body) => {
+            res.writeHead(status, {
+              'content-type': 'application/json; charset=utf-8',
+              'cache-control': 'no-store',
+            });
+            res.end(JSON.stringify(body));
+          };
+          if (req.method !== 'POST') {
+            send(405, { ok: false });
+            return;
+          }
+
+          try {
+            const chunks = [];
+            let total = 0;
+            for await (const chunk of req) {
+              total += chunk.length;
+              if (total > 8192) {
+                send(413, { ok: false });
+                req.destroy();
+                return;
+              }
+              chunks.push(chunk);
+            }
+            const raw = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            const sanitized = {
+              sessionId: typeof raw.sessionId === 'string' ? raw.sessionId.slice(0, 128) : undefined,
+              model: typeof raw.model === 'string' ? raw.model.slice(0, 128) : undefined,
+              projectedTokens: typeof raw.projectedTokens === 'number' ? raw.projectedTokens : null,
+              pressureTokens: typeof raw.pressureTokens === 'number' ? raw.pressureTokens : null,
+              contextWindow: typeof raw.contextWindow === 'number' ? raw.contextWindow : null,
+              updatedAt: new Date().toISOString(),
+            };
+
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 1200);
+            try {
+              await fetch(targetUrl, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(sanitized),
+                signal: ctrl.signal,
+              });
+            } finally {
+              clearTimeout(timer);
+            }
+            send(200, { ok: true });
+          } catch {
+            send(200, { ok: false });
+          }
+        },
+      };
+      scope.effect(() => scope.webServer.register(route), 'dsh-stocking-quota-bridge: host route');
+    } catch (error) {
+      console.error(`[dsh-stocking-quota-bridge] host route skipped: ${error}`);
+    }
+  });
+}

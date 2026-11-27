@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build & Release outputs (upload .exe installers to GitHub Releases instead)
+dist/
+dist-electron/
+release/
+
+# Raw intermediate artwork & temporary files
+raw_assets/
+*.bak
+*.bak-*
+*.sq-tmp
+*.log
+_test.out
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/

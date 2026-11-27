@@ -1,0 +1,80 @@
+{
+  "name": "stocking-quota-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "StockingQuota V1.0: Windows Transparent Desktop AI Agent Quota Widget (Codex, Antigravity, DeepSeek Harness)",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite --port 5173 --strictPort",
+    "build:web": "tsc --noEmit && vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build": "npm run build:web && npm run build:electron",
+    "electron:start": "npm run build && electron .",
+    "package:win": "npm run build && electron-builder --win dir",
+    "package:installer": "npm run build && electron-builder --win nsis",
+    "package:portable": "npm run build && electron-builder --win portable",
+    "package:release": "npm run build && electron-builder --win dir nsis portable",
+    "preview": "vite preview --port 4173"
+  },
+  "build": {
+    "appId": "com.stockingquota.desktop",
+    "productName": "StockingQuota",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "build/icon.ico",
+      "build/icon.png",
+      "build/tray.png",
+      "vendor/codexbar/**/*",
+      "vendor/win-tracker/**/*",
+      "vendor/win-sentinel/**/*",
+      "dsh-plugin/dsh-stocking-quota-bridge/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "build/**/*",
+      "vendor/codexbar/**/*",
+      "vendor/win-tracker/**/*",
+      "vendor/win-sentinel/**/*",
+      "dsh-plugin/dsh-stocking-quota-bridge/**/*"
+    ],
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "StockingQuota-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "StockingQuota-${version}-Portable.exe"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "pixi.js": "^8.9.2"
+  },
+  "devDependencies": {
+    "electron": "^35.2.1",
+    "electron-builder": "^26.0.12",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.3"
+  }
+}

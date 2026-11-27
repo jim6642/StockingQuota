@@ -1,0 +1,7 @@
+- insert:
+    - id: dsh-stocking-quota-bridge
+      name: dsh-stocking-quota-bridge
+      config:
+        targetUrl: 'http://127.0.0.1:17821/dsh/context'
+        autoLaunch: true
+        stockingQuotaExe: ''

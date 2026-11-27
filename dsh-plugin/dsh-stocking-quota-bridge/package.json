@@ -1,0 +1,23 @@
+{
+  "name": "dsh-stocking-quota-bridge",
+  "version": "0.3.1",
+  "description": "Zero-UI DeepSeek Harness Host+Client bridge plugin pushing official contextPressure metrics to StockingQuota",
+  "type": "module",
+  "license": "MIT",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
