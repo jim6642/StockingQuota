@@ -336,7 +336,7 @@ function startHostCalibration(agent: RealAgentId): void {
           : target === 'codex'
             ? snap.codexQuotaButtonDip
             : target === 'dsh'
-              ? computeDshMeterButtonDip(hostRect, lastDshMeterRect)
+              ? snap.dshMeterButtonDip ?? computeDshMeterButtonDip(hostRect, lastDshMeterRect)
               : null;
       const spot = resolveHostHotspotDip(hostRect, nextAnchor, uiaBtn, target);
       showHostPopup(target, resolvePopupBoundsForHotspot(spot, nextAnchor.corner, target));
@@ -437,7 +437,7 @@ function startCursorBoundaryGuard(): void {
             : hostAgent === 'codex'
               ? snap.codexQuotaButtonDip
               : hostAgent === 'dsh'
-                ? computeDshMeterButtonDip(hostRect, lastDshMeterRect)
+                ? snap.dshMeterButtonDip ?? computeDshMeterButtonDip(hostRect, lastDshMeterRect)
                 : null;
         const spot = resolveHostHotspotDip(hostRect, anchor, uiaButton, hostAgent);
 

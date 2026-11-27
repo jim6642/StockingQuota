@@ -20,6 +20,9 @@ export interface WindowTrackerSnapshot {
   /** True when Codex's UIA button tree is active (distinguishes "sidebar collapsed" from "UIA not loaded yet") */
   codexUiaReady: boolean;
   codexMenuOpen: boolean;
+  /** Live UIA bounds of DSH's bottom ContextMeter (`○ 30%`) — immune to opening/closing right or left sidebars! */
+  dshMeterButtonDip: Electron.Rectangle | null;
+  dshUiaReady: boolean;
   /** Currently running Agent processes on this Windows PC */
   runningAgents: RealAgentId[];
 }
@@ -43,6 +46,8 @@ export class WinForegroundTracker {
     codexQuotaButtonDip: null,
     codexUiaReady: false,
     codexMenuOpen: false,
+    dshMeterButtonDip: null,
+    dshUiaReady: false,
     runningAgents: [],
   };
 
@@ -116,6 +121,7 @@ export class WinForegroundTracker {
         ? { ...this.snapshot.antigravityModelButtonDip }
         : null,
       codexQuotaButtonDip: this.snapshot.codexQuotaButtonDip ? { ...this.snapshot.codexQuotaButtonDip } : null,
+      dshMeterButtonDip: this.snapshot.dshMeterButtonDip ? { ...this.snapshot.dshMeterButtonDip } : null,
       runningAgents: [...this.snapshot.runningAgents],
     };
   }
@@ -145,6 +151,8 @@ export class WinForegroundTracker {
         codexUiaReady?: boolean;
         codexMenuOpen?: boolean;
         codexMouseDown?: Electron.Point;
+        dshButton?: Electron.Rectangle | null;
+        dshUiaReady?: boolean;
         running?: string[];
       };
 
@@ -173,6 +181,8 @@ export class WinForegroundTracker {
       let antigravityModelButtonDip = this.snapshot.antigravityModelButtonDip;
       let codexQuotaButtonDip = this.snapshot.codexQuotaButtonDip;
       let codexUiaReady = this.snapshot.codexUiaReady;
+      let dshMeterButtonDip = this.snapshot.dshMeterButtonDip;
+      let dshUiaReady = this.snapshot.dshUiaReady;
 
       if (fgAgent === 'codex' || fgAgent === 'antigravity' || fgAgent === 'dsh') {
         activeHostAgent = fgAgent;
@@ -181,6 +191,9 @@ export class WinForegroundTracker {
         codexQuotaButtonDip =
           fgAgent === 'codex' && parsed.codexButton ? screen.screenToDipRect(null, parsed.codexButton) : null;
         codexUiaReady = fgAgent === 'codex' && parsed.codexUiaReady === true;
+        dshMeterButtonDip =
+          fgAgent === 'dsh' && parsed.dshButton ? screen.screenToDipRect(null, parsed.dshButton) : null;
+        dshUiaReady = fgAgent === 'dsh' && parsed.dshUiaReady === true;
 
         if (parsed.rect && parsed.rect.width > 80 && parsed.rect.height > 80) {
           try {
@@ -197,6 +210,8 @@ export class WinForegroundTracker {
           antigravityModelButtonDip = null;
           codexQuotaButtonDip = null;
           codexUiaReady = false;
+          dshMeterButtonDip = null;
+          dshUiaReady = false;
         }
       } else {
         // User switched to a completely unrelated window (e.g. browser, game, explorer)
@@ -205,6 +220,8 @@ export class WinForegroundTracker {
         antigravityModelButtonDip = null;
         codexQuotaButtonDip = null;
         codexUiaReady = false;
+        dshMeterButtonDip = null;
+        dshUiaReady = false;
       }
 
       this.snapshot = {
@@ -216,6 +233,8 @@ export class WinForegroundTracker {
         codexQuotaButtonDip,
         codexUiaReady,
         codexMenuOpen: fgAgent === 'codex' && parsed.codexMenuOpen === true,
+        dshMeterButtonDip,
+        dshUiaReady,
         runningAgents,
       };
 

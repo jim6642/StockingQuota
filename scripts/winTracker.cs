@@ -10,10 +10,10 @@ using System.Windows.Automation;
 
 /// <summary>
 /// Ultra-lightweight Per-Monitor V2 DPI-aware Win32 foreground window, Agent process,
-/// and cached UI Automation (UIA) button tracker for StockingQuota V0.4+.
+/// and cached UI Automation (UIA) button tracker for StockingQuota V1.0+.
 /// - Antigravity: tracks model selector button + menu open state + left-click instant dismiss.
-/// - Codex: tracks bottom-left quota circle via cached UIA element (handles sidebar open/close/resize)
-///   with semantic keyword match + left-rail geometric fallback + left-click instant dismiss.
+/// - Codex: tracks bottom-left quota circle via cached UIA element (handles sidebar open/close/resize).
+/// - DSH: tracks bottom ContextMeter (`○ 30%`) via cached UIA element (handles right/left sidebar toggles!).
 /// Exits automatically if parent closes stdin (never leaves orphan processes).
 /// </summary>
 internal static class Program
@@ -29,8 +29,10 @@ internal static class Program
 
     private static IntPtr antigravityWindow;
     private static IntPtr codexWindow;
+    private static IntPtr dshWindow;
     private static volatile TrackedControl antigravityControl;
     private static volatile TrackedControl codexControl;
+    private static volatile TrackedControl dshControl;
 
     private struct MousePressEvent
     {
@@ -178,6 +180,43 @@ internal static class Program
         return false;
     }
 
+    /// <summary>
+    /// Matches standalone context percentage labels like "2%", "30%", "99.5%", "100%"
+    /// while strictly rejecting cumulative cache-hit text like "221M tok · 缓存命中 99.7%".
+    /// </summary>
+    private static bool IsStandalonePercent(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        string s = text.Trim();
+        if (s.Length < 2 || s.Length > 6 || s[s.Length - 1] != '%') return false;
+        int dots = 0;
+        int digits = 0;
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            char c = s[i];
+            if (c >= '0' && c <= '9') digits++;
+            else if (c == '.' && dots == 0) dots++;
+            else return false;
+        }
+        return digits > 0;
+    }
+
+    private static bool MatchesDshContextLabel(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        string lower = text.ToLowerInvariant();
+        if (lower.Contains("缓存") || lower.Contains("cache") || lower.Contains("tok/s")) return false;
+        if (IsStandalonePercent(text)) return true;
+        return (lower.Contains("上下文") || lower.Contains("context")) && lower.Contains("%");
+    }
+
+    private static Rect ExpandDshRingRect(Rect b)
+    {
+        // When UIA hits only the "30%" text node, pad left by ~24px to include the circular ring SVG beside it
+        double padLeft = b.Width < 58 ? 24 : 4;
+        return new Rect(b.Left - padLeft, b.Top - 3, b.Width + padLeft + 6, Math.Max(22, b.Height + 6));
+    }
+
     private static bool IsExpanded(AutomationElement element, bool useCached)
     {
         try
@@ -225,7 +264,7 @@ internal static class Program
         agyCache.Add(ExpandCollapsePattern.Pattern);
         agyCache.Add(ExpandCollapsePattern.ExpandCollapseStateProperty);
 
-        // Codex UIA condition & cache (keeps live element handle so we can query single node in <1ms!)
+        // Codex UIA condition & cache (keeps live element handle for <1ms single-node reads)
         var codexButtonCondition = new AndCondition(
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
             new PropertyCondition(AutomationElement.IsOffscreenProperty, false));
@@ -237,11 +276,28 @@ internal static class Program
         codexScanCache.Add(ExpandCollapsePattern.Pattern);
         codexScanCache.Add(ExpandCollapsePattern.ExpandCollapseStateProperty);
 
-        // Single-element cache state for Codex (avoids scanning large chat DOM trees every 400ms!)
+        // DSH UIA condition & cache (matches Button or Text for the bottom "○ 30%" ContextMeter!)
+        var dshMeterCondition = new AndCondition(
+            new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)),
+            new PropertyCondition(AutomationElement.IsOffscreenProperty, false));
+        var dshScanCache = new CacheRequest { AutomationElementMode = AutomationElementMode.Full };
+        dshScanCache.Add(AutomationElement.NameProperty);
+        dshScanCache.Add(AutomationElement.HelpTextProperty);
+        dshScanCache.Add(AutomationElement.ControlTypeProperty);
+        dshScanCache.Add(AutomationElement.BoundingRectangleProperty);
+
+        // Single-element caches for Codex & DSH
         AutomationElement cachedCodexEl = null;
         IntPtr cachedCodexHwnd = IntPtr.Zero;
         RECT cachedCodexWinRect = new RECT();
         long lastCodexFullScanTick = 0;
+
+        AutomationElement cachedDshEl = null;
+        IntPtr cachedDshHwnd = IntPtr.Zero;
+        RECT cachedDshWinRect = new RECT();
+        long lastDshFullScanTick = 0;
 
         while (true)
         {
@@ -356,7 +412,6 @@ internal static class Program
 
                             if (kw && b.Width <= 240 && b.Height <= 72)
                             {
-                                // Prefer compact bottom-left match
                                 if (bestKeyword == null || b.Left < bestKeyword.Bounds.Left ||
                                     (Math.Abs(b.Left - bestKeyword.Bounds.Left) <= 20 && b.Bottom > bestKeyword.Bounds.Bottom))
                                 {
@@ -385,7 +440,6 @@ internal static class Program
                         CodexCandidate chosen = bestKeyword;
                         if (chosen == null && leftRailIcons.Count >= 2)
                         {
-                            // In Codex's far-left rail, the circular quota icon sits directly above the bottom-most avatar circle
                             leftRailIcons.Sort((a, b) => a.Bounds.Top.CompareTo(b.Bounds.Top));
                             CodexCandidate bottomMost = leftRailIcons[leftRailIcons.Count - 1];
                             double bottomCx = bottomMost.Bounds.Left + bottomMost.Bounds.Width * 0.5;
@@ -426,7 +480,115 @@ internal static class Program
                 codexControl = null;
             }
 
-            Thread.Sleep(320);
+            // 3. DeepSeek Harness (DSH) bottom "○ 30%" ContextMeter tracking via cached UIA element!
+            IntPtr dshHost = Interlocked.CompareExchange(ref dshWindow, IntPtr.Zero, IntPtr.Zero);
+            if (dshHost != IntPtr.Zero && fg == dshHost)
+            {
+                RECT winRect;
+                bool gotWinRect = TryGetCleanRect(dshHost, out winRect);
+                long nowTick = Environment.TickCount;
+                bool winSizeChanged =
+                    !gotWinRect ||
+                    cachedDshHwnd != dshHost ||
+                    Math.Abs((winRect.Right - winRect.Left) - (cachedDshWinRect.Right - cachedDshWinRect.Left)) > 4 ||
+                    Math.Abs((winRect.Bottom - winRect.Top) - (cachedDshWinRect.Bottom - cachedDshWinRect.Top)) > 4;
+
+                bool usedFastCache = false;
+                if (cachedDshEl != null && !winSizeChanged && unchecked(nowTick - lastDshFullScanTick) < 2500)
+                {
+                    try
+                    {
+                        bool offscreen = cachedDshEl.Current.IsOffscreen;
+                        Rect b = cachedDshEl.Current.BoundingRectangle;
+                        if (!offscreen && !b.IsEmpty && b.Width >= 10 && b.Height >= 10 && b.Width <= 180 &&
+                            (!gotWinRect || (b.Top >= winRect.Bottom - 110 && b.Bottom <= winRect.Bottom + 8)))
+                        {
+                            dshControl = new TrackedControl(dshHost, ExpandDshRingRect(b), false, true);
+                            usedFastCache = true;
+                        }
+                        else
+                        {
+                            cachedDshEl = null;
+                        }
+                    }
+                    catch
+                    {
+                        cachedDshEl = null;
+                    }
+                }
+
+                if (!usedFastCache && gotWinRect)
+                {
+                    lastDshFullScanTick = nowTick;
+                    cachedDshHwnd = dshHost;
+                    cachedDshWinRect = winRect;
+                    try
+                    {
+                        var root = AutomationElement.FromHandle(dshHost);
+                        AutomationElementCollection nodes;
+                        using (dshScanCache.Activate())
+                            nodes = root.FindAll(TreeScope.Descendants, dshMeterCondition);
+
+                        bool uiaReady = nodes.Count >= 3;
+                        int bottomZoneTop = winRect.Bottom - 105;
+
+                        AutomationElement bestEl = null;
+                        Rect bestRect = Rect.Empty;
+                        int bestScore = -1;
+
+                        foreach (AutomationElement el in nodes)
+                        {
+                            Rect b;
+                            try { b = el.Cached.BoundingRectangle; }
+                            catch { continue; }
+                            if (b.IsEmpty || b.Width < 10 || b.Height < 10 || b.Width > 180 || b.Height > 54) continue;
+                            if (b.Top < bottomZoneTop || b.Bottom > winRect.Bottom + 8) continue;
+                            if (b.Left < winRect.Left - 4 || b.Right > winRect.Right + 4) continue;
+
+                            string name = el.Cached.Name ?? "";
+                            string help = el.Cached.HelpText ?? "";
+                            bool isPct = IsStandalonePercent(name);
+                            bool isCtx = MatchesDshContextLabel(name) || MatchesDshContextLabel(help);
+                            if (!isPct && !isCtx) continue;
+
+                            int score = isPct ? 100 : 60;
+                            if (el.Cached.ControlType == ControlType.Button) score += 20;
+                            // Prefer the lowest matching element in the bottom status dock
+                            score += (int)((b.Bottom - bottomZoneTop) * 0.2);
+
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                bestEl = el;
+                                bestRect = b;
+                            }
+                        }
+
+                        if (bestEl != null)
+                        {
+                            cachedDshEl = bestEl;
+                            dshControl = new TrackedControl(dshHost, ExpandDshRingRect(bestRect), false, uiaReady);
+                        }
+                        else
+                        {
+                            cachedDshEl = null;
+                            dshControl = new TrackedControl(dshHost, Rect.Empty, false, uiaReady);
+                        }
+                    }
+                    catch
+                    {
+                        cachedDshEl = null;
+                        dshControl = null;
+                    }
+                }
+            }
+            else if (dshHost == IntPtr.Zero)
+            {
+                cachedDshEl = null;
+                dshControl = null;
+            }
+
+            Thread.Sleep(300);
         }
     }
 
@@ -585,6 +747,7 @@ internal static class Program
             {
                 Interlocked.Exchange(ref antigravityWindow, fgAgent == "antigravity" && hasRect ? hwnd : IntPtr.Zero);
                 Interlocked.Exchange(ref codexWindow, fgAgent == "codex" && hasRect ? hwnd : IntPtr.Zero);
+                Interlocked.Exchange(ref dshWindow, fgAgent == "dsh" && hasRect ? hwnd : IntPtr.Zero);
             }
 
             string rectJson = hasRect
@@ -599,8 +762,12 @@ internal static class Program
             bool curCx = fgAgent == "codex" && cxBtn != null && cxBtn.Window == hwnd;
             string cxButtonJson = curCx ? FormatRect(cxBtn.Bounds) : "null";
 
+            TrackedControl dBtn = dshControl;
+            bool curDsh = fgAgent == "dsh" && dBtn != null && dBtn.Window == hwnd;
+            string dshButtonJson = curDsh ? FormatRect(dBtn.Bounds) : "null";
+
             string payload = string.Format(
-                "{{\"fgAgent\":\"{0}\",\"rect\":{1},\"running\":{2},\"modelButton\":{3},\"modelMenuOpen\":{4},\"codexButton\":{5},\"codexUiaReady\":{6},\"codexMenuOpen\":{7}}}",
+                "{{\"fgAgent\":\"{0}\",\"rect\":{1},\"running\":{2},\"modelButton\":{3},\"modelMenuOpen\":{4},\"codexButton\":{5},\"codexUiaReady\":{6},\"codexMenuOpen\":{7},\"dshButton\":{8},\"dshUiaReady\":{9}}}",
                 fgAgent,
                 rectJson,
                 cachedRunning,
@@ -608,7 +775,9 @@ internal static class Program
                 curAgy && agyBtn.MenuOpen ? "true" : "false",
                 cxButtonJson,
                 curCx && cxBtn.UiaReady ? "true" : "false",
-                curCx && cxBtn.MenuOpen ? "true" : "false"
+                curCx && cxBtn.MenuOpen ? "true" : "false",
+                dshButtonJson,
+                curDsh && dBtn.UiaReady ? "true" : "false"
             );
 
             if (payload != lastPayload)
