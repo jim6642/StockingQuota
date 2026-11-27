@@ -1,12 +1,10 @@
-import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { promisify } from 'util';
-import { resolveCodexBarCliPath, runCodexBarCli } from './codexProvider';
+import { execSilentCli, resolveCodexBarCliPath, runCodexBarCli } from './codexProvider';
 import { AgentMetric, AgentMetricWindow } from './types';
 
-const execFileAsync = promisify(execFile);
+let cachedAgyVersion: { agyPath: string; mtimeMs: number; version: string } | null = null;
 const GEMINI = /\bgemini\b/i;
 const EXCLUDED = /\b(?:gpt|openai|claude|anthropic|sonnet|opus|haiku|o[134])\b/i;
 const WINDOW_LABELS = { '5h': '5H 额度', weekly: '周额度' };
@@ -157,22 +155,31 @@ function getSafeAgyVersion(stdout: string): string | undefined {
   return undefined;
 }
 
-async function readAgyUsage(): Promise<{ windows: GeminiWindow[]; version?: string }> {
+async function readAgyUsage(appRoot: string): Promise<{ windows: GeminiWindow[]; version?: string }> {
   let version: string | undefined;
   try {
     const agy = resolveAgyCli();
     if (!agy) return { windows: [] };
 
-    const options = { windowsHide: true, maxBuffer: 1024 * 1024 };
-    const { stdout: versionOutput } = await execFileAsync(agy, ['--version'], { ...options, timeout: 5000 });
-    version = getSafeAgyVersion(versionOutput);
-    if (!version) return { windows: [] };
+    const st = fs.statSync(agy, { throwIfNoEntry: false });
+    const mtimeMs = st?.mtimeMs ?? 0;
+    if (cachedAgyVersion && cachedAgyVersion.agyPath === agy && cachedAgyVersion.mtimeMs === mtimeMs) {
+      version = cachedAgyVersion.version;
+    } else {
+      const { stdout: versionOutput } = await execSilentCli(agy, ['--version'], { timeout: 5000, maxBuffer: 1024 * 1024 }, appRoot);
+      version = getSafeAgyVersion(versionOutput);
+      if (!version) return { windows: [] };
+      cachedAgyVersion = { agyPath: agy, mtimeMs, version };
+    }
 
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'sq-agy-'));
     try {
-      const { stdout } = await execFileAsync(agy, ['-p', '/usage', '--output-format', 'json'], {
-        ...options, cwd: workdir, timeout: 35000,
-      });
+      const { stdout } = await execSilentCli(
+        agy,
+        ['-p', '/usage', '--output-format', 'json'],
+        { cwd: workdir, timeout: 35000, maxBuffer: 1024 * 1024 },
+        appRoot,
+      );
       return { windows: parseCliUsage(JSON.parse(stdout)), version };
     } finally {
       fs.rmSync(workdir, { recursive: true, force: true });
@@ -183,7 +190,7 @@ async function readAgyUsage(): Promise<{ windows: GeminiWindow[]; version?: stri
 }
 
 export async function fetchAntigravityMetric(appRoot: string): Promise<AgentMetric> {
-  const agy = await readAgyUsage();
+  const agy = await readAgyUsage(appRoot);
   if (agy.windows.length) {
     return {
       agent: 'antigravity',
@@ -198,7 +205,7 @@ export async function fetchAntigravityMetric(appRoot: string): Promise<AgentMetr
   try {
     const cli = resolveCodexBarCliPath(appRoot);
     // Use Win-CodexBar's local probe only. StockingQuota owns all agy invocations and version checks.
-    const result = cli && await runCodexBarCli(cli, 'antigravity', 25000, { ANTIGRAVITY_CLI_PATH: '' });
+    const result = cli && await runCodexBarCli(cli, 'antigravity', 25000, { ANTIGRAVITY_CLI_PATH: '' }, appRoot);
     if (result && result.source && result.source !== 'offline' && result.usage) {
       const usage = result.usage as CodexBarUsage;
       const windows = fromCodexBar(usage);

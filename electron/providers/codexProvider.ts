@@ -27,6 +27,42 @@ interface CodexBarProviderPayload {
   error?: string | null;
 }
 
+export function resolveSilentExecPath(appRoot?: string): string | null {
+  const candidates = [
+    appRoot ? path.join(appRoot, 'vendor', 'win-exec', 'sq-silent-exec.exe').replace('app.asar', 'app.asar.unpacked') : '',
+    appRoot ? path.join(appRoot, 'vendor', 'win-exec', 'sq-silent-exec.exe') : '',
+    path.join(process.cwd(), 'vendor', 'win-exec', 'sq-silent-exec.exe'),
+  ].filter(Boolean);
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * Executes a Windows console CLI (`codexbar-cli.exe`, `agy.exe`) through our 9KB WinExe ConPTY
+ * headless runner (`sq-silent-exec.exe`) so neither the CLI nor any grandchild process it spawns
+ * can ever flash a visible black console window on Windows 10/11!
+ */
+export async function execSilentCli(
+  targetExe: string,
+  args: string[],
+  options: { timeout?: number; maxBuffer?: number; cwd?: string; env?: NodeJS.ProcessEnv } = {},
+  appRoot?: string,
+): Promise<{ stdout: string; stderr: string }> {
+  const runner = resolveSilentExecPath(appRoot);
+  const execPath = runner ?? targetExe;
+  const execArgs = runner ? [targetExe, ...args] : args;
+  return execFileAsync(execPath, execArgs, {
+    timeout: options.timeout ?? 25000,
+    maxBuffer: options.maxBuffer ?? 1024 * 1024,
+    cwd: options.cwd,
+    windowsHide: true,
+    env: options.env,
+  });
+}
+
 /**
  * Resolve bundled MIT-licensed Win-CodexBar CLI binary (`vendor/codexbar/codexbar-cli.exe`)
  * or user-installed `codexbar-cli.exe` in PATH.
@@ -50,13 +86,18 @@ export async function runCodexBarCli(
   provider: 'codex' | 'antigravity',
   timeoutMs = 25000,
   extraEnv?: NodeJS.ProcessEnv,
+  appRoot?: string,
 ): Promise<CodexBarProviderPayload | null> {
-  const { stdout } = await execFileAsync(cliPath, ['usage', '-p', provider, '--json'], {
-    timeout: timeoutMs,
-    maxBuffer: 1024 * 1024,
-    windowsHide: true,
-    env: { ...process.env, NO_COLOR: '1', ...extraEnv },
-  });
+  const { stdout } = await execSilentCli(
+    cliPath,
+    ['usage', '-p', provider, '--json'],
+    {
+      timeout: timeoutMs,
+      maxBuffer: 1024 * 1024,
+      env: { ...process.env, NO_COLOR: '1', ...extraEnv },
+    },
+    appRoot,
+  );
 
   const text = stdout.trim();
   if (!text) return null;
@@ -180,7 +221,7 @@ export async function fetchCodexMetric(appRoot: string): Promise<AgentMetric> {
 
   if (cliPath) {
     try {
-      const payload = await runCodexBarCli(cliPath, 'codex');
+      const payload = await runCodexBarCli(cliPath, 'codex', 25000, undefined, appRoot);
       if (payload?.usage && payload.source !== 'offline') {
         const w5h = toWindow('5h', '5H 会话', payload.usage.primary);
         const wWeek = toWindow('weekly', '周额度', payload.usage.secondary);

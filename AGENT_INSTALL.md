@@ -24,7 +24,7 @@
 
 ```powershell
 $fx = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319"
-New-Item -ItemType Directory -Force -Path "vendor\win-tracker","vendor\win-sentinel" | Out-Null
+New-Item -ItemType Directory -Force -Path "vendor\win-tracker","vendor\win-sentinel","vendor\win-exec" | Out-Null
 
 # 1. 前台窗口与 UIA 按钮追踪器（支持 Antigravity 切模型按钮 + Codex 额度圆环缓存追踪）
 & "$fx\csc.exe" /nologo /optimize+ /target:winexe `
@@ -33,9 +33,13 @@ New-Item -ItemType Directory -Force -Path "vendor\win-tracker","vendor\win-senti
   /r:"$fx\WPF\UIAutomationTypes.dll" `
   /out:"vendor\win-tracker\sq-wintracker.exe" "scripts\winTracker.cs"
 
-# 2. ~3MB 极轻随 Agent 自动唤醒哨兵
+# 2. ~4.6MB 极轻随 Agent 自动唤醒哨兵
 & "$fx\csc.exe" /nologo /optimize+ /target:winexe `
   /out:"vendor\win-sentinel\sq-sentinel.exe" "scripts\sentinel.cs"
+
+# 3. 9KB ConPTY 无黑框命令行执行器（杜绝 Win11 下子/孙进程刷新额度时弹黑框）
+& "$fx\csc.exe" /nologo /optimize+ /target:winexe `
+  /out:"vendor\win-exec\sq-silent-exec.exe" "scripts\silentExec.cs"
 ```
 
 ---

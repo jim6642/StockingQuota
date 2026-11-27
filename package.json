@@ -32,6 +32,7 @@
       "vendor/codexbar/**/*",
       "vendor/win-tracker/**/*",
       "vendor/win-sentinel/**/*",
+      "vendor/win-exec/**/*",
       "dsh-plugin/dsh-stocking-quota-bridge/**/*",
       "package.json"
     ],
@@ -40,6 +41,7 @@
       "vendor/codexbar/**/*",
       "vendor/win-tracker/**/*",
       "vendor/win-sentinel/**/*",
+      "vendor/win-exec/**/*",
       "dsh-plugin/dsh-stocking-quota-bridge/**/*"
     ],
     "nsis": {
